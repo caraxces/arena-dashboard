@@ -1,0 +1,855 @@
+<script>
+function bootDashboard(){
+"use strict";
+const PAY = window.__ARENA__, SYS = PAY.system || {hubs:[],daily:{}};
+const MASK = !!PAY.masked;
+const HOURS = []; for (let h = 5; h < 24; h++) HOURS.push(h);
+const DOW = ["T2","T3","T4","T5","T6","T7","CN"];
+const PEAK_S = 1020, PEAK_E = 1260, MS = 864e5;
+const D0 = SYS.dailyD0, NDAYS = SYS.dailyN, TODAY = SYS.today, OPENH = SYS.openHours || 19;
+const DETAIL = {}; (PAY.hubs || []).forEach(h => DETAIL[h.hub] = h);
+const HUBS = SYS.hubs || [];
+const HUE = ["var(--s1)","var(--s2)","var(--s3)"];
+const METRICS_ALL = {
+  rev:   {label:"Doanh thu",     hint:"tiền sân"},
+  hours: {label:"Giờ-sân",       hint:"thời lượng bán"},
+  occ:   {label:"Tỉ lệ lấp đầy", hint:"trên công suất"},
+  aov:   {label:"Thu / giờ-sân", hint:"tiêu chí chọn hub"}
+};
+const METRICS = MASK ? {hours:METRICS_ALL.hours, occ:METRICS_ALL.occ} : METRICS_ALL;
+const CTYPES = {all:"Tất cả", fixed:"Cố định", flex:"Vãng lai"};
+
+let S = {hub:"Arena.03", period:"30", from:0, to:0, gran:"day",
+         metric: MASK ? "occ" : "rev", ctype:"all", courts:new Set()};
+
+/* ── tiện ích ── */
+const $ = s => document.querySelector(s);
+const el = (t,c,h) => { const e = document.createElement(t); if (c) e.className = c;
+  if (h !== undefined) e.innerHTML = h; return e; };
+function dateOf(i){ return new Date(new Date(D0+"T00:00:00Z").getTime() + i*MS); }
+function idxOf(s){ return Math.round((new Date(s+"T00:00:00Z") - new Date(D0+"T00:00:00Z"))/MS); }
+function iso(i){ return dateOf(i).toISOString().slice(0,10); }
+function wd(i){ return (dateOf(i).getUTCDay()+6)%7; }
+function fmtD(i){ const d = dateOf(i);
+  return String(d.getUTCDate()).padStart(2,"0")+"/"+String(d.getUTCMonth()+1).padStart(2,"0"); }
+function nf(x,d){ const p = d?10**d:1; return (Math.round(x*p)/p).toLocaleString("vi-VN"); }
+function money(x){ const a = Math.abs(x||0);
+  if (a>=1e9) return ((x||0)/1e9).toFixed(2).replace(".",",")+" tỷ";
+  if (a>=1e6) return ((x||0)/1e6).toFixed(1).replace(".",",")+"tr";
+  if (a>=1e3) return Math.round((x||0)/1e3).toLocaleString("vi-VN")+"k";
+  return nf(x||0); }
+function vnd(x){ return nf(Math.round(x||0))+"đ"; }
+function hm(m){ return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0"); }
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
+const isFixed = t => t===1 || t===5;
+const selHubs = () => S.hub === "ALL" ? HUBS : HUBS.filter(h => h.name === S.hub);
+const detailHub = () => DETAIL[S.hub] || null;
+
+/* ── tổng hợp từ chuỗi ngày (có cho cả 3 hub) ── */
+/* full: [ngày, tiềnCĐ, giờCĐ, tiềnVL, giờVL] · team: [ngày, giờCĐ, giờVL] */
+const rowFixed = r => MASK ? {m:0, h:r[1]} : {m:r[1], h:r[2]};
+const rowFlex  = r => MASK ? {m:0, h:r[2]} : {m:r[3], h:r[4]};
+function dayAgg(hubName, from, to){
+  const rows = SYS.daily[hubName] || [];
+  let rev = 0, hrs = 0;
+  for (const r of rows){
+    if (r[0] < from || r[0] > to) continue;
+    if (S.ctype !== "flex"){ const o = rowFixed(r); rev += o.m; hrs += o.h; }
+    if (S.ctype !== "fixed"){ const o = rowFlex(r);  rev += o.m; hrs += o.h; }
+  }
+  return {rev, hours: hrs};
+}
+function aggSel(from, to){
+  let rev = 0, hours = 0, courts = 0;
+  for (const h of selHubs()){
+    const a = dayAgg(h.name, from, to);
+    rev += a.rev; hours += a.hours; courts += h.courts;
+  }
+  const days = Math.max(0, to - from + 1);
+  const cap = courts * OPENH * days;
+  return {rev, hours, cap, courts, days,
+          occ: cap ? hours/cap*100 : 0, aov: hours ? rev/hours : 0};
+}
+function pick(a,m){ return m==="rev"?a.rev : m==="hours"?a.hours : m==="occ"?a.occ : a.aov; }
+function fmtMetric(v,m){
+  return m==="rev" ? money(v) : m==="occ" ? nf(v,1)+"%" : m==="aov" ? money(v) : nf(v,0);
+}
+
+/* ── điều khiển ── */
+const PERIODS = [["today","Hôm nay"],["7","7 ngày"],["30","30 ngày"],["90","90 ngày"],["all","Tất cả"]];
+function applyPeriod(k){
+  S.period = k;
+  if (k==="today"){ S.from = TODAY; S.to = TODAY; }
+  else if (k==="all"){ S.from = 0; S.to = TODAY; }
+  else { S.to = TODAY; S.from = Math.max(0, TODAY - (+k) + 1); }
+  syncDates();
+}
+function syncDates(){ $("#c-from").value = iso(S.from); $("#c-to").value = iso(S.to); }
+const GRAN_MIN = {day:1, week:7, month:28};
+const granOk = g => (S.to - S.from + 1) >= GRAN_MIN[g];
+
+function segment(host, items, get, set, dis){
+  host.innerHTML = "";
+  for (const [v,lab,sub] of items){
+    const b = el("button", null, sub ? `${lab}<i>${sub}</i>` : lab);
+    b.setAttribute("aria-pressed", get()===v);
+    if (dis && dis(v)){ b.disabled = true; b.style.opacity=".38"; b.style.cursor="not-allowed"; }
+    else b.onclick = () => { set(v); render(); };
+    host.appendChild(b);
+  }
+}
+function buildControls(){
+  const hubItems = HUBS.map(h => [h.name, h.name,
+      `${h.courts} sân · ${h.area}` + (DETAIL[h.name] ? "" : " · gộp")]);
+  hubItems.push(["ALL","Cả 3 hub",
+      `${HUBS.reduce((a,h)=>a+h.courts,0)} sân · toàn chuỗi`]);
+  segment($("#c-hub"), hubItems, () => S.hub, v => S.hub = v);
+  segment($("#c-period"), PERIODS, () => S.period, v => applyPeriod(v));
+  if (!granOk(S.gran)) S.gran = granOk("week") ? "week" : "day";
+  segment($("#c-gran"), [["day","Ngày"],["week","Tuần"],["month","Tháng"]],
+          () => S.gran, v => S.gran = v, g => !granOk(g));
+  segment($("#c-metric"), Object.entries(METRICS).map(([k,m])=>[k,m.label,m.hint]),
+          () => S.metric, v => S.metric = v);
+  segment($("#c-ctype"), Object.entries(CTYPES).map(([k,v])=>[k,v]), () => S.ctype, v => S.ctype = v);
+
+  const d = detailHub(), cc = $("#c-courts");
+  $("#ctl-courts").classList.toggle("hide", !d);
+  if (d){
+    if (!S.courts.size || S.courts.size > d.fields.length)
+      S.courts = new Set(d.fields.map((_,i)=>i));
+    cc.innerHTML = "";
+    d.fields.forEach((nm,i) => {
+      const b = el("button", null, nm.replace(/^Sân\s*/,"S"));
+      b.title = nm; b.setAttribute("aria-pressed", S.courts.has(i));
+      b.onclick = () => { S.courts.has(i)?S.courts.delete(i):S.courts.add(i);
+        if (!S.courts.size) S.courts.add(i); render(); };
+      cc.appendChild(b);
+    });
+    $("#c-allcourts").onclick = () => { d.fields.forEach((_,i)=>S.courts.add(i)); render(); };
+  }
+  $("#c-from").onchange = e => { const v = idxOf(e.target.value);
+    if (!isNaN(v)){ S.from = Math.max(0, Math.min(v, S.to)); S.period="custom"; render(); } };
+  $("#c-to").onchange = e => { const v = idxOf(e.target.value);
+    if (!isNaN(v)){ S.to = Math.max(S.from, Math.min(v, NDAYS-1)); S.period="custom"; render(); } };
+}
+
+/* ── tooltip ── */
+const tip = () => $("#tip");
+function bindTip(node, html){
+  node.addEventListener("pointerenter", ev => { const t=tip(); t.innerHTML=html; t.classList.add("on"); moveTip(ev); });
+  node.addEventListener("pointermove", moveTip);
+  node.addEventListener("pointerleave", () => tip().classList.remove("on"));
+}
+function moveTip(ev){
+  const t = tip(), pad = 14; let x = ev.clientX+pad, y = ev.clientY+pad;
+  const r = t.getBoundingClientRect();
+  if (x+r.width > innerWidth-8) x = ev.clientX-r.width-pad;
+  if (y+r.height > innerHeight-8) y = ev.clientY-r.height-pad;
+  t.style.left = x+"px"; t.style.top = y+"px";
+}
+
+/* ── mảnh giao diện dùng lại ── */
+function kpiCard(label, val, delta, note, hero, unit){
+  const c = el("div","kpi"+(hero?" hero":""));
+  c.appendChild(el("span","kl",esc(label)));
+  c.appendChild(el("p","kv",val));
+  const d = el("div","kd");
+  if (delta!==null && delta!==undefined && isFinite(delta)){
+    const up = delta>=0;
+    d.innerHTML = `<b class="${up?"up":"down"}">${up?"▲":"▼"} ${nf(Math.abs(delta),1)}${unit===undefined?"%":unit}</b>`
+                + `<span>${esc(note||"so kỳ trước")}</span>`;
+  } else d.innerHTML = `<span>${esc(note||"")}</span>`;
+  c.appendChild(d); return c;
+}
+const pctChange = (c,p) => p ? (c-p)/p*100 : null;
+function barList(host, items, fmt){
+  const max = Math.max(...items.map(i=>i.v), 1e-9);
+  host.innerHTML = "";
+  items.forEach(it => {
+    const r = el("div","brow"+(it.dim?" dim":""));
+    r.appendChild(el("span","bt",esc(it.label)));
+    const k = el("span","bk"), f = el("i");
+    f.style.width = Math.max(0,it.v/max*100).toFixed(1)+"%";
+    if (it.color) f.style.background = it.color;
+    k.appendChild(f); r.appendChild(k);
+    r.appendChild(el("span","bv",fmt(it.v)));
+    if (it.tip) bindTip(r, it.tip);
+    host.appendChild(r);
+  });
+}
+function qClass(p){ return "q"+(p>=85?5:p>=65?4:p>=40?3:p>=15?2:p>0?1:0); }
+function merge(iv){ const m=[]; for (const [s,e] of iv.slice().sort((a,b)=>a[0]-b[0]))
+  { if (m.length && s<=m[m.length-1][1]) m[m.length-1][1]=Math.max(m[m.length-1][1],e); else m.push([s,e]); } return m; }
+
+/* ════════════ CÔNG CỤ CHỌN HUB THAY KHÁCH ════════════ */
+const P = {day:0, start:19, dur:2, scope:"all"};
+const AREAS = [...new Set(HUBS.map(h=>h.area))];
+
+function freeCourtsAt(hub, day, s, e){
+  const d = DETAIL[hub.name]; if (!d) return null;
+  const off = 0, byF = new Map();
+  for (const b of d.bk){ if (b[0]!==day || b[4]===4) continue;
+    (byF.get(b[1]) || byF.set(b[1],[]).get(b[1])).push([b[2],b[3]]); }
+  let free = 0;
+  for (let i = 0; i < d.fields.length; i++){
+    const busy = merge(byF.get(i) || []).some(([a,b]) => a < e && b > s);
+    if (!busy) free++;
+  }
+  return free;
+}
+function hourOcc(hub, hour, wdi){
+  const d = DETAIL[hub.name]; if (!d) return null;
+  const from = Math.max(0, TODAY-28), s = hour*60, e = s+60;
+  let mins = 0, days = 0;
+  for (let i = from; i < TODAY; i++) if (wd(i) === wdi) days++;
+  if (!days) return null;
+  for (const b of d.bk){
+    if (b[0] < from || b[0] >= TODAY || b[4] === 4 || wd(b[0]) !== wdi) continue;
+    mins += Math.max(0, Math.min(b[3],e) - Math.max(b[2],s));
+  }
+  return mins/(60*d.fields.length*days)*100;
+}
+function listRate(hub, day, s, e){
+  const d = DETAIL[hub.name]; if (!d || !d.priceGrid) return null;
+  const g = d.priceGrid[0][wd(day)]; let v = 0;
+  for (let h = Math.floor(s/60); h < Math.ceil(e/60); h++){
+    const ov = Math.min(e,(h+1)*60) - Math.max(s,h*60);
+    if (ov > 0) v += (g[h]||0)/60*ov;
+  }
+  return v/((e-s)/60);
+}
+
+function buildPickBar(){
+  const bar = $("#pickbar"); bar.innerHTML = "";
+  const f1 = el("div","pf"); f1.appendChild(el("label",null,"Ngày"));
+  const di = el("input"); di.type = "date"; di.value = iso(P.day);
+  di.min = iso(0); di.max = iso(NDAYS-1);
+  di.onchange = e => { const v = idxOf(e.target.value);
+    if (!isNaN(v)){ P.day = Math.max(0,Math.min(v,NDAYS-1)); renderPick(); } };
+  f1.appendChild(di); bar.appendChild(f1);
+
+  const f2 = el("div","pf"); f2.appendChild(el("label",null,"Giờ bắt đầu"));
+  const hs = el("select");
+  HOURS.forEach(h => { const o = el("option",null,String(h).padStart(2,"0")+":00");
+    o.value = h; if (h===P.start) o.selected = true; hs.appendChild(o); });
+  hs.onchange = e => { P.start = +e.target.value; renderPick(); };
+  f2.appendChild(hs); bar.appendChild(f2);
+
+  const f3 = el("div","pf"); f3.appendChild(el("label",null,"Số giờ"));
+  const ds = el("select");
+  [1,1.5,2,2.5,3,4].forEach(v => { const o = el("option",null,String(v).replace(".",",")+"h");
+    o.value = v; if (v===P.dur) o.selected = true; ds.appendChild(o); });
+  ds.onchange = e => { P.dur = +e.target.value; renderPick(); };
+  f3.appendChild(ds); bar.appendChild(f3);
+
+  const f4 = el("div","pf"); f4.appendChild(el("label",null,"Khách muốn khu vực"));
+  const seg = el("div","seg");
+  [["all","Ở đâu cũng được"], ...AREAS.map(a=>[a,a])].forEach(([v,lab]) => {
+    const b = el("button",null,lab);
+    b.setAttribute("aria-pressed", P.scope===v);
+    b.onclick = () => { P.scope = v; renderPick(); };
+    seg.appendChild(b);
+  });
+  f4.appendChild(seg); bar.appendChild(f4);
+}
+
+function renderPick(){
+  buildPickBar();
+  const intro = $("#s-pick").querySelector(".sh p");
+  if (intro) intro.textContent = MASK
+    ? "Khách cho khung giờ nhưng “ở đâu cũng được”. Bản này không hiển thị doanh thu nên xếp hạng theo hai tiêu chí còn lại: nhiều sân trống hơn → lấp đầy khung đó thấp hơn."
+    : "Khách cho khung giờ nhưng “ở đâu cũng được”. Bảng này xếp hạng theo đúng ba tiêu chí: thu về mỗi giờ-sân cao hơn → nhiều sân trống hơn → lấp đầy khung đó thấp hơn.";
+  const s = P.start*60, e = s + P.dur*60;
+  const cands = HUBS.filter(h => P.scope==="all" || h.area===P.scope);
+  const rows = cands.map(h => {
+    const aov = (!MASK && h.hours && h.money) ? h.money/h.hours : 0;
+    const free = freeCourtsAt(h, P.day, s, e);
+    const occ  = hourOcc(h, P.start, wd(P.day));
+    return {h, aov, free, occ, rate: listRate(h, P.day, s, e), full: free!==null && occ!==null};
+  });
+  rows.forEach(r => r.sold = r.free === 0);            // hết sân thì loại khỏi tiến cử
+  rows.sort((a,b) => {
+    if (a.sold !== b.sold) return a.sold ? 1 : -1;
+    if (a.full !== b.full) return a.full ? -1 : 1;
+    if (!MASK && Math.abs(a.aov-b.aov) > 500) return b.aov - a.aov;    // i. thu/giờ cao trước
+    if (a.full && b.full && a.free !== b.free) return b.free - a.free; // ii. nhiều sân trống hơn
+    if (a.full && b.full) return a.occ - b.occ;                        // iii. lấp đầy thấp bán trước
+    return b.aov - a.aov;
+  });
+  const win = rows.find(r => !r.sold) || null;
+  const out = $("#pick-out"); out.innerHTML = "";
+  const wrap = el("div","pickcards");
+  rows.forEach(r => {
+    const c = el("div","pc" + (r===win?" win":"") + (r.full?"":" na"));
+    c.appendChild(el("span","badge "+(r===win?"b1":"b0"),
+      r.sold ? "hết sân" : r===win ? "chọn hub này" : r.full ? "dự phòng" : "thiếu dữ liệu"));
+    c.appendChild(el("span","pcname",esc(r.h.name)));
+    c.appendChild(el("p","pcarea",`${esc(r.h.area)} · ${r.h.courts} sân · ${esc(r.h.addr)}`));
+    const dl = el("dl");
+    const row = (k,v,est) => { dl.appendChild(el("dt",null,k));
+      dl.appendChild(el("dd", est?"est":null, v)); };
+    if (!MASK) row("i. Thu / giờ-sân", vnd(r.aov));
+    row("ii. Sân trống khung này", r.free===null ? "cần token" : `${r.free}/${r.h.courts}`, r.free===null);
+    row("iii. Lấp đầy khung này", r.occ===null ? "cần token" : nf(r.occ,0)+"%", r.occ===null);
+    if (!MASK && r.rate!==null) row("Giá niêm yết", vnd(r.rate)+"/h");
+    c.appendChild(dl);
+    if (r.sold){
+      c.appendChild(el("p","why","Khung này đã kín cả " + r.h.courts + " sân — không chào được."));
+    } else if (r===win){
+      const others = rows.filter(x => x!==r && !x.sold);
+      let why;
+      if (MASK){
+        const near = others.find(x => x.full && r.full && x.free === r.free);
+        why = near
+          ? `Số sân trống ngang ${esc(near.h.name)}, nhưng khung này lấp thấp hơn (${nf(r.occ,0)}% so với ${nf(near.occ,0)}%) nên bán trước`
+          : `Còn nhiều sân trống nhất nhóm`;
+      } else {
+        why = `Thu về mỗi giờ-sân cao nhất nhóm còn chỗ (${vnd(r.aov)})`;
+        const near = others.find(x => Math.abs(x.aov-r.aov) <= 500);
+        if (near && r.full && near.full){
+          why = r.free !== near.free
+            ? `Thu / giờ-sân ngang ${esc(near.h.name)}, nhưng còn nhiều sân trống hơn (${r.free} so với ${near.free})`
+            : `Thu / giờ-sân và số sân trống đều ngang ${esc(near.h.name)}, nhưng khung này lấp thấp hơn (${nf(r.occ,0)}% so với ${nf(near.occ,0)}%) nên bán trước`;
+        }
+      }
+      if (r.full) why += ` · còn ${r.free}/${r.h.courts} sân, khung này mới lấp ${nf(r.occ,0)}%`;
+      c.appendChild(el("p","why", why + "."));
+    }
+    wrap.appendChild(c);
+  });
+  out.appendChild(wrap);
+
+  const missing = rows.filter(r => !r.full).map(r => r.h.name);
+  if (!win) out.insertBefore(el("div","empty",
+    "Cả " + rows.length + " hub trong phạm vi này đều kín khung giờ đó."), out.firstChild);
+  $("#pick-note").innerHTML =
+    `Khung ${hm(s)}–${hm(e)} ngày ${fmtD(P.day)} ${DOW[wd(P.day)]}` +
+    ` · phạm vi <strong>${P.scope==="all"?"cả ba hub":esc(P.scope)}</strong>.` +
+    (MASK
+      ? ` Bản này không hiển thị doanh thu nên tiêu chí i bị bỏ qua — xếp hạng chỉ theo tiêu chí ii và iii.`
+        + (missing.length ? ` Hai tiêu chí đó cần lịch chi tiết, hiện chưa có cho ${missing.map(esc).join(", ")}.` : "")
+      : missing.length
+      ? ` Tiêu chí i dùng số thật của cả ba hub (28 ngày qua). Tiêu chí ii và iii cần dữ liệu lịch chi tiết —`
+        + ` hiện chưa có cho ${missing.map(esc).join(", ")}, nên hai hub đó chỉ xếp được theo tiêu chí i.`
+        + ` Có token là bảng tự đầy đủ.`
+      : ` Cả ba tiêu chí đều chạy trên dữ liệu thật.`);
+}
+
+/* ════════════ SO SÁNH BA HUB ════════════ */
+function renderSystem(){
+  if (!HUBS.length){ $("#s-system").classList.add("hide"); return; }
+  const d1 = SYS.from, d2 = SYS.to;
+  $("#sys-sub").textContent = `${d1} → ${d2} · 28 ngày · mức toàn chuỗi, không đổi theo bộ lọc bên phải.`;
+  const MC = MASK ? "" : `<th>Doanh thu</th>`, MC2 = MASK ? "" : `<th>Thu/giờ-sân</th><th>% cố định</th>`;
+  let t = `<table><thead><tr><th>Hub</th><th>Khu vực</th><th>Sân</th>${MC}`
+        + `<th>Giờ-sân</th><th>Công suất</th><th>Lấp đầy</th>${MC2}<th>Huỷ</th></tr></thead><tbody>`;
+  HUBS.forEach(h => {
+    const aov = h.hours && h.money ? h.money/h.hours : 0;
+    const fx = h.byType && h.byType["1"] ? h.byType["1"].m : 0;
+    t += `<tr><td><strong>${esc(h.name)}</strong></td><td>${esc(h.area)}</td>`
+       + `<td class="num">${h.courts}</td>`
+       + (MASK ? "" : `<td class="num">${money(h.money)}</td>`)
+       + `<td class="num">${nf(h.hours,0)}</td><td class="num">${nf(h.cap,0)}</td>`
+       + `<td class="num">${nf(h.cap?h.hours/h.cap*100:0,1)}%</td>`
+       + (MASK ? "" : `<td class="num">${vnd(aov)}</td><td class="num">${nf(h.money?fx/h.money*100:0,0)}%</td>`)
+       + `<td class="num">${h.cancel==null?"—":h.cancel}</td></tr>`;
+  });
+  const tm = HUBS.reduce((a,h)=>a+(h.money||0),0), th = HUBS.reduce((a,h)=>a+h.hours,0);
+  const tc = HUBS.reduce((a,h)=>a+h.cap,0), tk = HUBS.reduce((a,h)=>a+h.courts,0);
+  t += `<tr class="sys-hi"><td>Toàn chuỗi</td><td>—</td><td class="num">${tk}</td>`
+     + (MASK ? "" : `<td class="num">${money(tm)}</td>`)
+     + `<td class="num">${nf(th,0)}</td><td class="num">${nf(tc,0)}</td>`
+     + `<td class="num">${nf(tc?th/tc*100:0,1)}%</td>`
+     + (MASK ? "" : `<td class="num">${vnd(th?tm/th:0)}</td><td class="num">—</td>`)
+     + `<td class="num">${HUBS.reduce((a,h)=>a+(h.cancel||0),0)}</td></tr>`;
+  $("#sys-table").innerHTML = t + `</tbody></table>`;
+
+  barList($("#sys-occ"), HUBS.map((h,i)=>({label:h.name, v: h.cap?h.hours/h.cap*100:0, color:HUE[i],
+    tip:`<b>${esc(h.name)}</b><br>${nf(h.hours,0)} / ${nf(h.cap,0)} giờ-sân`})), v=>nf(v,1)+"%");
+  const aovBox = $("#sys-aov").parentElement;
+  if (MASK){
+    aovBox.querySelector("h3").textContent = "Giờ-sân đã bán";
+    aovBox.querySelector(".fine").textContent = "Bản này không hiển thị số liệu doanh thu.";
+    barList($("#sys-aov"), HUBS.map((h,i)=>({label:h.name, v:h.hours, color:HUE[i],
+      tip:`<b>${esc(h.name)}</b><br>Giờ-sân: <b>${nf(h.hours,0)}</b> / ${nf(h.cap,0)}`})), v=>nf(v,0));
+  } else {
+    barList($("#sys-aov"), HUBS.map((h,i)=>({label:h.name, v: h.hours?h.money/h.hours:0, color:HUE[i],
+      tip:`<b>${esc(h.name)}</b><br>Doanh thu: <b>${money(h.money)}</b><br>Giờ-sân: <b>${nf(h.hours,0)}</b>`})), vnd);
+  }
+
+  const labels = HUBS[0].series.map(x=>x.label);
+  const chartH = $("#sys-chart").closest(".panel").previousElementSibling;
+  if (chartH && chartH.tagName === "H3")
+    chartH.textContent = MASK ? "Giờ-sân bán theo tháng" : "Doanh thu theo tháng";
+  if (MASK){ monthlyHours(labels); return; }
+  const host = $("#sys-chart"); host.innerHTML = "";
+  const W = Math.max(host.clientWidth||760,320), H = 220, PL = 56, PR = 10, PT = 12, PB = 26;
+  const iw = W-PL-PR, ih = H-PT-PB;
+  const max = Math.max(...HUBS.flatMap(h=>h.series.map(x=>x.norm)),1), nice = max*1.1;
+  const y = v => PT+ih-(v/nice)*ih;
+  const step = iw/labels.length, gw = Math.min(step-10,96), bw = Math.max(3,(gw-4)/HUBS.length);
+  const NS = "http://www.w3.org/2000/svg";
+  const mk = (t2,a) => { const n = document.createElementNS(NS,t2); for (const k in a) n.setAttribute(k,a[k]); return n; };
+  const svg = mk("svg",{class:"chart",viewBox:`0 0 ${W} ${H}`,width:"100%",height:H,
+    role:"img","aria-label":"Doanh thu theo tháng của ba hub"});
+  for (let g=0; g<=4; g++){ const v = nice*g/4, yy = y(v);
+    svg.appendChild(mk("line",{class:"gl",x1:PL,x2:W-PR,y1:yy,y2:yy}));
+    const tx = mk("text",{class:"ax",x:PL-7,y:yy+3.5,"text-anchor":"end"}); tx.textContent = money(v);
+    svg.appendChild(tx); }
+  labels.forEach((lab,i) => {
+    const gx = PL + i*step + (step-gw)/2;
+    HUBS.forEach((h,j) => {
+      const p = h.series[i], hh = (p.norm/nice)*ih, x = gx + j*(bw+2);
+      if (hh>0) svg.appendChild(mk("rect",{class:"bar",x,y:y(p.norm),width:bw,
+        height:Math.max(hh,.8),fill:HUE[j],rx:2,ry:2,opacity:p.full?1:.62}));
+      const hit = mk("rect",{x,y:PT,width:bw,height:ih,fill:"transparent"});
+      bindTip(hit,`<b>${esc(h.name)}</b> · ${esc(lab)}<br>Doanh thu: <b>${money(p.m)}</b>`
+        + (p.full?"":`<br>${p.days} ngày — quy đổi 30 ngày: <b>${money(p.norm)}</b>`));
+      svg.appendChild(hit);
+    });
+    const tx = mk("text",{class:"ax",x:PL+i*step+step/2,y:H-8,"text-anchor":"middle"});
+    tx.textContent = lab; svg.appendChild(tx);
+  });
+  host.appendChild(svg);
+  $("#sys-legend").innerHTML = HUBS.map((h,i)=>
+    `<span><i class="key" style="background:${HUE[i]}"></i>${esc(h.name)}</span>`).join("")
+    + `<span style="color:var(--dim)">cột nhạt = tháng chưa trọn, quy đổi về 30 ngày</span>`;
+}
+
+function monthlyHours(labels){
+  const host = $("#sys-chart"); host.innerHTML = "";
+  const acc = HUBS.map(() => new Map());
+  HUBS.forEach((h,j) => {
+    for (const r of (SYS.daily[h.name]||[])){
+      const d = dateOf(r[0]);
+      const k = String(d.getUTCMonth()+1).padStart(2,"0")+"/"+String(d.getUTCFullYear()).slice(2);
+      const o = acc[j].get(k) || {h:0,d:0};
+      o.h += rowFixed(r).h + rowFlex(r).h; o.d++;
+      acc[j].set(k,o);
+    }
+  });
+  const keys = labels.filter(l => acc.some(m => m.has(l)));
+  const val = (j,k) => { const o = acc[j].get(k); return o ? o.h/o.d*30 : 0; };
+  const W = Math.max(host.clientWidth||760,320), H = 220, PL = 56, PR = 10, PT = 12, PB = 26;
+  const iw = W-PL-PR, ih = H-PT-PB;
+  const max = Math.max(...keys.flatMap(k => HUBS.map((_,j)=>val(j,k))),1), nice = max*1.1;
+  const y = v => PT+ih-(v/nice)*ih;
+  const step = iw/Math.max(keys.length,1), gw = Math.min(step-10,96), bw = Math.max(3,(gw-4)/HUBS.length);
+  const NS = "http://www.w3.org/2000/svg";
+  const mk = (t,a) => { const n = document.createElementNS(NS,t); for (const q in a) n.setAttribute(q,a[q]); return n; };
+  const svg = mk("svg",{class:"chart",viewBox:`0 0 ${W} ${H}`,width:"100%",height:H,role:"img",
+    "aria-label":"Giờ-sân bán theo tháng của ba hub"});
+  for (let g=0; g<=4; g++){ const v = nice*g/4, yy = y(v);
+    svg.appendChild(mk("line",{class:"gl",x1:PL,x2:W-PR,y1:yy,y2:yy}));
+    const tx = mk("text",{class:"ax",x:PL-7,y:yy+3.5,"text-anchor":"end"}); tx.textContent = nf(v,0);
+    svg.appendChild(tx); }
+  keys.forEach((k,i) => {
+    const gx = PL + i*step + (step-gw)/2;
+    HUBS.forEach((h,j) => {
+      const v = val(j,k), hh = (v/nice)*ih, x = gx + j*(bw+2);
+      if (hh>0) svg.appendChild(mk("rect",{class:"bar",x,y:y(v),width:bw,height:Math.max(hh,.8),
+        fill:HUE[j],rx:2,ry:2}));
+      const hit = mk("rect",{x,y:PT,width:bw,height:ih,fill:"transparent"});
+      bindTip(hit,`<b>${esc(h.name)}</b> · ${esc(k)}<br>Giờ-sân/30 ngày: <b>${nf(v,0)}</b>`);
+      svg.appendChild(hit);
+    });
+    const tx = mk("text",{class:"ax",x:PL+i*step+step/2,y:H-8,"text-anchor":"middle"});
+    tx.textContent = k; svg.appendChild(tx);
+  });
+  host.appendChild(svg);
+  $("#sys-legend").innerHTML = HUBS.map((h,i)=>
+    `<span><i class="key" style="background:${HUE[i]}"></i>${esc(h.name)}</span>`).join("")
+    + `<span style="color:var(--dim)">quy đổi về 30 ngày</span>`;
+}
+
+/* ════════════ DIỄN BIẾN ════════════ */
+function bucketOf(i){
+  if (S.gran==="day") return i;
+  const d = dateOf(i);
+  if (S.gran==="week") return i - ((d.getUTCDay()+6)%7);
+  return "m"+d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0");
+}
+function bucketLabel(k){
+  if (S.gran==="day") return fmtD(k);
+  if (S.gran==="week") return "T"+fmtD(k);
+  const [y,m] = String(k).slice(1).split("-"); return m+"/"+y.slice(2);
+}
+function buildBuckets(){
+  const order = [], days = new Map();
+  for (let i = S.from; i <= S.to; i++){
+    const k = bucketOf(i);
+    if (!days.has(k)){ days.set(k,0); order.push(k); }
+    days.set(k, days.get(k)+1);
+  }
+  const acc = new Map(order.map(k => [k,{mf:0,hf:0,mv:0,hv:0}]));
+  const courts = selHubs().reduce((a,h)=>a+h.courts,0);
+  for (const h of selHubs()){
+    for (const r of (SYS.daily[h.name]||[])){
+      if (r[0] < S.from || r[0] > S.to) continue;
+      const t = acc.get(bucketOf(r[0])); if (!t) continue;
+      const a = rowFixed(r), b2 = rowFlex(r);
+      t.mf += a.m; t.hf += a.h; t.mv += b2.m; t.hv += b2.h;
+    }
+  }
+  return order.map(k => {
+    const o = acc.get(k), cap = courts*OPENH*days.get(k);
+    const mk = (m,hh) => ({rev:m, hours:hh, occ: cap?hh/cap*100:0, aov: hh?m/hh:0});
+    return {k, label:bucketLabel(k), days:days.get(k), cap,
+            fixed: mk(o.mf,o.hf), flex: mk(o.mv,o.hv),
+            both: mk(o.mf+o.mv, o.hf+o.hv)};
+  });
+}
+function renderTrend(bs){
+  const host = $("#trend-chart"), m = S.metric, both = S.ctype === "all";
+  host.innerHTML = "";
+  if (!bs.length){ host.appendChild(el("div","empty","Không có dữ liệu trong kỳ đã chọn.")); return; }
+  const tot = b => both ? b.both[m] : (S.ctype==="fixed"?b.fixed[m]:b.flex[m]);
+  const stack = both && (m==="rev" || m==="hours");     /* chỉ cộng dồn được đại lượng cộng tính */
+  const W = Math.max(host.clientWidth||760,320), H = 250, PL = 56, PR = 10, PT = 12, PB = 30;
+  const iw = W-PL-PR, ih = H-PT-PB;
+  const max = Math.max(...bs.map(tot), m==="occ"?10:1);
+  const nice = m==="occ" ? Math.min(100, Math.ceil(max/10)*10) : max*1.08;
+  const y = v => PT+ih-(v/nice)*ih;
+  const step = iw/bs.length, bw = Math.max(2, Math.min(step-3,46));
+  const NS = "http://www.w3.org/2000/svg";
+  const mk = (t,a) => { const e = document.createElementNS(NS,t); for (const k in a) e.setAttribute(k,a[k]); return e; };
+  const svg = mk("svg",{class:"chart",viewBox:`0 0 ${W} ${H}`,width:"100%",height:H,role:"img",
+    "aria-label":`${METRICS[m].label} theo ${S.gran==="day"?"ngày":S.gran==="week"?"tuần":"tháng"}`});
+  for (let g=0; g<=4; g++){ const v = nice*g/4, yy = y(v);
+    svg.appendChild(mk("line",{class:"gl",x1:PL,x2:W-PR,y1:yy,y2:yy}));
+    const tx = mk("text",{class:"ax",x:PL-7,y:yy+3.5,"text-anchor":"end"});
+    tx.textContent = m==="occ" ? Math.round(v)+"%" : (m==="hours"?nf(v,0):money(v));
+    svg.appendChild(tx); }
+  const every = Math.ceil(bs.length/12);
+  bs.forEach((b,i) => {
+    const x = PL + i*step + (step-bw)/2;
+    if (stack){
+      let acc = PT+ih;
+      [["flex",b.flex[m],"var(--s2)"],["fixed",b.fixed[m],"var(--s1)"]].forEach(([,v,col])=>{
+        const h = (v/nice)*ih; if (h<=0) return;
+        svg.appendChild(mk("rect",{class:"bar",x,y:acc-h,width:bw,height:Math.max(h-2,.8),fill:col,rx:2,ry:2}));
+        acc -= h;
+      });
+    } else {
+      const v = tot(b), h = (v/nice)*ih;
+      if (h>0) svg.appendChild(mk("rect",{class:"bar",x,y:y(v),width:bw,height:Math.max(h,.8),
+        fill: both?"var(--brand)":(S.ctype==="fixed"?"var(--s1)":"var(--s2)"),rx:2,ry:2}));
+    }
+    const hit = mk("rect",{x:PL+i*step,y:PT,width:step,height:ih,fill:"transparent"});
+    const extra = both
+      ? `<br><span class="key" style="background:var(--s1);display:inline-block;width:8px;height:8px;margin-right:5px"></span>Cố định: <b>${fmtMetric(b.fixed[m],m)}</b>`
+       +`<br><span class="key" style="background:var(--s2);display:inline-block;width:8px;height:8px;margin-right:5px"></span>Vãng lai: <b>${fmtMetric(b.flex[m],m)}</b>` : "";
+    bindTip(hit,`<b>${esc(b.label)}</b> · ${b.days} ngày<br>${METRICS[m].label}: <b>${fmtMetric(tot(b),m)}</b>${extra}`);
+    svg.appendChild(hit);
+    if (i%every===0 || i===bs.length-1){
+      const tx = mk("text",{class:"ax",x:PL+i*step+step/2,y:H-10,"text-anchor":"middle"});
+      tx.textContent = b.label; svg.appendChild(tx); }
+    if (bs.length<=16){
+      const tv = mk("text",{class:"lbl",x:PL+i*step+step/2,y:y(tot(b))-5,"text-anchor":"middle"});
+      tv.textContent = fmtMetric(tot(b),m); svg.appendChild(tv); }
+  });
+  host.appendChild(svg);
+  $("#trend-legend").innerHTML = both
+    ? (stack ? `<span><i class="key" style="background:var(--s1)"></i>Cố định</span>
+                <span><i class="key" style="background:var(--s2)"></i>Vãng lai</span>`
+             : `<span><i class="key" style="background:var(--brand)"></i>Tất cả khách</span>
+                <span style="color:var(--dim)">tỉ lệ và giá bình quân không cộng dồn được nên hiển thị gộp</span>`)
+    : `<span><i class="key" style="background:${S.ctype==="fixed"?"var(--s1)":"var(--s2)"}"></i>${CTYPES[S.ctype]}</span>`;
+  let t = `<table><thead><tr><th>Kỳ</th><th>Ngày</th><th>Cố định</th><th>Vãng lai</th><th>Tổng</th></tr></thead><tbody>`;
+  bs.forEach(b => { t += `<tr><td>${esc(b.label)}</td><td class="num">${b.days}</td>`
+    + `<td class="num">${fmtMetric(b.fixed[m],m)}</td><td class="num">${fmtMetric(b.flex[m],m)}</td>`
+    + `<td class="num"><strong>${fmtMetric(b.both[m],m)}</strong></td></tr>`; });
+  $("#trend-table").innerHTML = t+"</tbody></table>";
+}
+
+/* ════════════ CÁC MỤC CHI TIẾT (cần dữ liệu lịch) ════════════ */
+function detailRows(d, from, to){
+  const out = [];
+  for (const b of d.bk){
+    if (b[0]<from || b[0]>to || b[4]===4) continue;
+    if (!S.courts.has(b[1])) continue;
+    if (S.ctype!=="all" && (S.ctype==="fixed")!==isFixed(b[4])) continue;
+    out.push(b);
+  }
+  return out;
+}
+function revOf(d, day, s, e, type){
+  if (!d.priceGrid) return 0;
+  const g = d.priceGrid[isFixed(type)?1:0][wd(day)]; let v = 0;
+  for (let h = Math.floor(s/60); h < Math.ceil(e/60); h++){
+    const ov = Math.min(e,(h+1)*60)-Math.max(s,h*60);
+    if (ov>0) v += (g[h]||0)/60*ov;
+  }
+  return v;
+}
+function renderDetail(){
+  const d = detailHub();
+  const gate = $("#detail-gate"), wrap = $("#detail-wrap");
+  if (!d){
+    wrap.classList.add("hide"); gate.classList.remove("hide");
+    const who = S.hub==="ALL" ? "Cả 3 hub" : S.hub;
+    gate.className = "gate";
+    gate.innerHTML = `<p><strong>${esc(who)} — chưa có dữ liệu lịch chi tiết.</strong></p>`
+      + `<p>Doanh thu, giờ-sân và tỉ lệ lấp đầy ở trên là số thật, lấy qua Report API (một token đọc được cả ba hub). `
+      + `Nhưng heatmap sân × giờ, chi tiết theo sân, giờ vàng còn trống và dữ liệu khách hàng cần `
+      + `<code>GetScheduleView</code> và <code>GetContractScheduleBookedDatatable</code> — hai endpoint này khoá theo từng hub.</p>`
+      + `<p>Xin G-Sport token cho shopID <strong>5981</strong> (Arena.01) và <strong>5980</strong> (Arena.02) là các mục này tự hiện, `
+      + `và công cụ chọn hub ở trên chạy đủ cả ba tiêu chí.</p>`;
+    return;
+  }
+  gate.classList.add("hide"); wrap.classList.remove("hide");
+  const nd = S.to - S.from + 1, rows = detailRows(d, S.from, S.to);
+  const courts = [...S.courts].sort((a,b)=>a-b);
+  const cell = new Map(), byHour = new Array(24).fill(0), hourRev = new Array(24).fill(0);
+  const perCourt = new Map(), courtRev = new Map(), courtCnt = new Map();
+  for (const b of rows){
+    perCourt.set(b[1],(perCourt.get(b[1])||0)+(b[3]-b[2]));
+    courtCnt.set(b[1],(courtCnt.get(b[1])||0)+1);
+    courtRev.set(b[1],(courtRev.get(b[1])||0)+revOf(d,b[0],b[2],b[3],b[4]));
+    const g = d.priceGrid ? d.priceGrid[isFixed(b[4])?1:0][wd(b[0])] : null;
+    for (let h = Math.floor(b[2]/60); h < Math.ceil(b[3]/60); h++){
+      const ov = Math.min(b[3],(h+1)*60)-Math.max(b[2],h*60); if (ov<=0) continue;
+      const k = b[1]+"|"+h;
+      cell.set(k,(cell.get(k)||0)+ov); byHour[h]+=ov;
+      if (g) hourRev[h]+=(g[h]||0)/60*ov;
+    }
+  }
+  /* heatmap */
+  $("#heat-sub").textContent = `${esc(d.hub)} · bình quân ${nd} ngày · ${CTYPES[S.ctype]} · số trong ô là % lấp đầy`;
+  let h = `<table class="heat"><thead><tr><th class="stick">Sân</th>`;
+  HOURS.forEach(x => h += `<th>${String(x).padStart(2,"0")}</th>`);
+  h += `<th class="tot">TB</th></tr></thead><tbody>`;
+  const cells = [];
+  courts.forEach(fi => {
+    h += `<tr><td class="stick">${esc(d.fields[fi])}</td>`;
+    HOURS.forEach(hr => { const mins = cell.get(fi+"|"+hr)||0, p = mins/(60*nd)*100;
+      cells.push({fi,hr,mins,p,rev:0});
+      h += `<td class="${qClass(p)}" data-c="${cells.length-1}">${p>=1?Math.round(p):""}</td>`; });
+    h += `<td class="tot num">${Math.round((perCourt.get(fi)||0)/(19*60*nd)*100)}%</td></tr>`;
+  });
+  h += `<tr class="sum"><td class="stick">TB</td>`;
+  HOURS.forEach(hr => { const p = byHour[hr]/(60*nd*courts.length)*100;
+    h += `<td class="${qClass(p)}">${p>=1?Math.round(p):""}</td>`; });
+  const totMins = [...perCourt.values()].reduce((a,b)=>a+b,0);
+  h += `<td class="tot num">${Math.round(totMins/(courts.length*19*60*nd)*100)}%</td></tr>`;
+  $("#heat").innerHTML = h+"</tbody></table>";
+  $("#heat").querySelectorAll("td[data-c]").forEach(td => { const c = cells[+td.dataset.c];
+    bindTip(td,`<b>${esc(d.fields[c.fi])}</b> · ${String(c.hr).padStart(2,"0")}:00<br>`
+      +`Lấp đầy: <b>${nf(c.p,1)}%</b><br>Giờ-sân: <b>${nf(c.mins/60,1)}</b>`); });
+  $("#heat-legend").innerHTML = "Thấp <i class='q1'></i><i class='q2'></i><i class='q3'></i><i class='q4'></i><i class='q5'></i> Cao"
+    + `<span style="margin-left:10px">di chuột để xem chi tiết</span>`;
+
+  /* theo khung giờ */
+  const m = S.metric;
+  $("#hour-sub").textContent = "Mỗi khung 60 phút · cột đậm là giờ vàng 17–21h.";
+  barList($("#by-hour"), HOURS.map(hr => {
+    const mins = byHour[hr], cap = courts.length*60*nd;
+    const v = m==="rev"?hourRev[hr] : m==="occ"?(cap?mins/cap*100:0)
+            : m==="aov"?(mins?hourRev[hr]/(mins/60):0) : mins/60;
+    return {label:String(hr).padStart(2,"0")+":00", v, dim: hr<17||hr>=21,
+      tip:`<b>${String(hr).padStart(2,"0")}:00</b><br>Lấp đầy: <b>${nf(cap?mins/cap*100:0,1)}%</b>`
+        +`<br>Giờ-sân: <b>${nf(mins/60,1)}</b>`
+        + (MASK ? "" : `<br>Doanh thu: <b>${money(hourRev[hr])}</b>`)};
+  }), v => m==="rev"||m==="aov" ? money(v) : m==="occ" ? nf(v,1)+"%" : nf(v,0));
+
+  /* theo sân */
+  const capC = 19*60*nd;
+  $("#court-sub").textContent = m==="occ"
+    ? "Xếp tăng dần — dùng khi khách đã chốt hub và không chọn sân."
+    : "Xếp giảm dần.";
+  const items = courts.map(fi => {
+    const mins = perCourt.get(fi)||0;
+    const v = m==="rev"?(courtRev.get(fi)||0) : m==="occ"?mins/capC*100
+            : m==="aov"?(mins?(courtRev.get(fi)||0)/(mins/60):0) : mins/60;
+    return {label:d.fields[fi], v,
+      tip:`<b>${esc(d.fields[fi])}</b><br>Lấp đầy: <b>${nf(mins/capC*100,1)}%</b><br>`
+        +`Giờ-sân: <b>${nf(mins/60,0)}</b><br>`
+        + (MASK ? "" : `Doanh thu: <b>${money(courtRev.get(fi)||0)}</b><br>`)
+        +`Lượt đặt: <b>${courtCnt.get(fi)||0}</b>`};
+  });
+  items.sort((a,b) => m==="occ" ? a.v-b.v : b.v-a.v);
+  barList($("#by-court"), items, v => m==="rev"||m==="aov" ? money(v) : m==="occ" ? nf(v,1)+"%" : nf(v,0));
+
+  renderOpp(d);
+  renderCust(d);
+}
+
+function renderOpp(d){
+  const byKey = new Map();
+  for (const b of d.bk){
+    if (b[0] < TODAY || b[4]===4 || !S.courts.has(b[1])) continue;
+    const k = b[0]+"|"+b[1];
+    (byKey.get(k) || byKey.set(k,[]).get(k)).push([b[2],b[3]]);
+  }
+  const opp = [], last = Math.min(TODAY+6, NDAYS-1);
+  for (let day = TODAY; day <= last; day++){
+    for (const fi of S.courts){
+      let cur = PEAK_S; const free = [];
+      for (const [s,e] of merge(byKey.get(day+"|"+fi)||[])){
+        if (e<=PEAK_S || s>=PEAK_E) continue;
+        if (s>cur) free.push([cur, Math.min(s,PEAK_E)]);
+        cur = Math.max(cur,e);
+      }
+      if (cur<PEAK_E) free.push([cur,PEAK_E]);
+      for (const [s,e] of free) if (e-s >= d.minTime)
+        opp.push({day, fi, s, e, v: revOf(d,day,s,e,2)});
+    }
+  }
+  const hrs = opp.reduce((a,o)=>a+(o.e-o.s)/60,0), val = opp.reduce((a,o)=>a+o.v,0);
+  $("#opp-sub").textContent = `${d.hub} · khoảng trống ≥${d.minTime} phút trong 17–21h, 7 ngày tới. `
+    + `Không phụ thuộc bộ lọc kỳ — đây là hàng đang trên kệ.`;
+  const K = $("#opp-kpis"); K.innerHTML = "";
+  K.appendChild(kpiCard("Khoảng trống", nf(opp.length), null, "slot bán được"));
+  K.appendChild(kpiCard("Giờ-sân", nf(hrs,0), null, "trong giờ vàng"));
+  if (!MASK) K.appendChild(kpiCard("Giá trị", money(val), null, "nếu bán hết", true));
+  const byDay = new Map();
+  opp.forEach(o => { const t = byDay.get(o.day)||{n:0,h:0,v:0};
+    t.n++; t.h += (o.e-o.s)/60; t.v += o.v; byDay.set(o.day,t); });
+  barList($("#opp-days"), [...byDay.entries()].sort((a,b)=>a[0]-b[0]).map(([dd,t])=>({
+    label: fmtD(dd)+" "+DOW[wd(dd)], v: MASK ? t.h : t.v,
+    tip:`<b>${fmtD(dd)} ${DOW[wd(dd)]}</b><br>${t.n} slot · ${nf(t.h,0)} giờ-sân`
+      + (MASK ? "" : `<br>Giá trị: <b>${money(t.v)}</b>`)
+  })), MASK ? (v=>nf(v,0)+" giờ") : money);
+  const top = opp.slice().sort((a,b)=> MASK ? (b.e-b.s)-(a.e-a.s) : b.v-a.v).slice(0,10);
+  $("#opp-list").innerHTML = top.length
+    ? `<table><thead><tr><th>Ngày</th><th>Sân</th><th>Khung giờ</th><th>${MASK?"Dài":"Giá trị"}</th></tr></thead><tbody>`
+      + top.map(o=>`<tr><td>${fmtD(o.day)} ${DOW[wd(o.day)]}</td><td>${esc(d.fields[o.fi])}</td>`
+        +`<td class="num">${hm(o.s)}–${hm(o.e)}</td>`
+        +`<td class="num">${MASK ? nf((o.e-o.s)/60,1)+"h" : money(o.v)}</td></tr>`).join("")
+      + `</tbody></table>`
+    : `<div class="empty">Giờ vàng đã kín 7 ngày tới.</div>`;
+}
+
+function renderCust(d){
+  const seen = new Map(), lead = [];
+  let n = 0, fixedN = 0;
+  for (const c of d.con){
+    const day = c[0], ci = c[1];
+    const mo = MASK ? 0 : c[2], t = MASK ? c[2] : c[3], lh = MASK ? c[3] : c[4];
+    if (day < S.from || day > S.to) continue;
+    if (S.ctype!=="all" && (S.ctype==="fixed")!==(t===1)) continue;
+    n++; if (t===1) fixedN++;
+    const o = seen.get(ci)||{n:0,rev:0,last:-1};
+    o.n++; o.rev += mo; o.last = Math.max(o.last,day); seen.set(ci,o);
+    if (lh>-24 && lh<24*120) lead.push(lh);
+  }
+  lead.sort((a,b)=>a-b);
+  const uniq = seen.size, repeat = [...seen.values()].filter(o=>o.n>1).length;
+  const revs = [...seen.values()].map(o=>o.rev).sort((a,b)=>b-a);
+  const totR = revs.reduce((a,b)=>a+b,0)||1;
+  const top10 = revs.slice(0,Math.max(1,Math.round(revs.length*.1))).reduce((a,b)=>a+b,0)/totR*100;
+  const med = revs.length ? revs[Math.floor(revs.length/2)] : 0;
+  const pq = p => lead.length ? lead[Math.min(lead.length-1,Math.floor(lead.length*p/100))] : 0;
+
+  $("#cust-sub").textContent = `${d.hub} · ${CTYPES[S.ctype]} · ghép theo số điện thoại · theo ngày chơi đầu tiên.`;
+  const K = $("#cust-kpis"); K.innerHTML = "";
+  K.appendChild(kpiCard("Khách unique", nf(uniq), null, nf(n)+" hợp đồng"));
+  K.appendChild(kpiCard("Tỉ lệ quay lại", uniq?nf(repeat/uniq*100,1)+"%":"—", null, repeat+" khách đặt >1 lần", true));
+  if (!MASK){
+    K.appendChild(kpiCard("Giá trị trung vị", money(med), null, "mỗi khách trong kỳ"));
+    K.appendChild(kpiCard("Top 10% khách", nf(top10,1)+"%", null, "giá trị từ nhóm này"));
+  } else {
+    const avg = uniq ? n/uniq : 0;
+    K.appendChild(kpiCard("Lượt đặt / khách", nf(avg,1), null, "bình quân trong kỳ"));
+  }
+  K.appendChild(kpiCard("Đặt gấp <2h", lead.length?nf(lead.filter(x=>x<2).length/lead.length*100,1)+"%":"—", null, "trên tổng đơn"));
+  K.appendChild(kpiCard("Hợp đồng cố định", nf(fixedN), null, "trong kỳ"));
+
+  barList($("#lead-bars"), [10,25,50,75,90].map(p=>({label:"p"+p, v:pq(p),
+    tip:`<b>Phân vị ${p}</b><br>${nf(pq(p),1)} giờ trước giờ chơi`})), v=>nf(v,1)+" giờ");
+  const freq = new Map();
+  for (const o of seen.values()){ const k = Math.min(o.n,10); freq.set(k,(freq.get(k)||0)+1); }
+  barList($("#freq-bars"), [...freq.entries()].sort((a,b)=>a[0]-b[0]).map(([k,v])=>({
+    label: k+(k===10?"+":"")+" lần", v})), v=>nf(v));
+
+  const top = [...seen.entries()].sort((a,b)=> MASK ? b[1].n-a[1].n : b[1].rev-a[1].rev).slice(0,15);
+  const tcH = $("#top-cust").previousElementSibling;
+  if (tcH) tcH.textContent = MASK ? "Top khách theo số lần đặt" : "Top khách theo giá trị";
+  $("#top-cust").innerHTML = top.length
+    ? `<table><thead><tr><th>#</th><th>Khách</th><th>Điện thoại</th><th>Số lần</th>`
+      + (MASK ? "" : `<th>Giá trị</th><th>TB/lần</th>`) + `<th>Gần nhất</th></tr></thead><tbody>`
+      + top.map(([ci,o],i)=>`<tr><td class="num">${i+1}</td><td><strong>${esc(d.cust[ci][0])}</strong></td>`
+        +`<td class="num">${esc(d.cust[ci][1])}</td><td class="num">${o.n}</td>`
+        + (MASK ? "" : `<td class="num">${money(o.rev)}</td><td class="num">${money(o.rev/o.n)}</td>`)
+        +`<td class="num">${o.last>=0?fmtD(o.last):"—"}</td></tr>`).join("")
+      + `</tbody></table>`
+    : `<div class="empty">Không có hợp đồng trong kỳ đã chọn.</div>`;
+  $("#cust-note").textContent = MASK
+    ? "Bản này không hiển thị giá trị hợp đồng. Số điện thoại được che một phần."
+    : "Giá trị là tổng giá trị hợp đồng — với hợp đồng cố định đó là trọn gói nhiều tháng, "
+      + "không phải riêng phần trong kỳ. Số điện thoại được che một phần.";
+}
+
+/* ════════════ RENDER CHÍNH ════════════ */
+function render(){
+  buildControls();
+  const nd = S.to - S.from + 1, m = S.metric;
+  const cur = aggSel(S.from, S.to);
+  const pf = Math.max(0, S.from-nd), pt = S.from-1;
+  const prev = pt>=pf ? aggSel(pf,pt) : null;
+  const label = S.hub==="ALL" ? "Cả 3 hub" : S.hub;
+
+  $("#kpi-title").textContent = `${label} — ${METRICS[m].label}, ${nd} ngày`;
+  $("#kpi-sub").textContent = `${fmtD(S.from)} → ${fmtD(S.to)} · ${CTYPES[S.ctype]} · `
+    + `${cur.courts} sân · so với ${nd} ngày liền trước`;
+  const K = $("#kpis"); K.innerHTML = "";
+  const idle = Math.max(0, cur.cap - cur.hours);
+  if (!MASK) K.appendChild(kpiCard("Doanh thu", money(cur.rev), prev?pctChange(cur.rev,prev.rev):null, null, m==="rev"));
+  K.appendChild(kpiCard("Giờ-sân bán", nf(cur.hours,0), prev?pctChange(cur.hours,prev.hours):null, null, m==="hours"));
+  K.appendChild(kpiCard("Tỉ lệ lấp đầy", nf(cur.occ,1)+"%", prev?(cur.occ-prev.occ):null,
+      "điểm % so kỳ trước", m==="occ", ""));
+  if (!MASK) K.appendChild(kpiCard("Thu / giờ-sân", vnd(cur.aov), prev?pctChange(cur.aov,prev.aov):null, null, m==="aov"));
+  K.appendChild(kpiCard("Giờ-sân trống", nf(idle,0), null, MASK ? "còn bán được" : `trần ${money(idle*cur.aov)}`));
+  K.appendChild(kpiCard("Công suất kỳ", nf(cur.cap,0), null, `${cur.courts} sân × ${OPENH}h × ${nd} ngày`));
+  if (!MASK) K.appendChild(kpiCard("Doanh thu / ngày", money(nd?cur.rev/nd:0), null, "bình quân trong kỳ"));
+  else K.appendChild(kpiCard("Giờ-sân / ngày", nf(nd?cur.hours/nd:0,0), null, "bình quân trong kỳ"));
+
+  const bs = buildBuckets();
+  $("#trend-title").textContent = `${METRICS[m].label} theo `
+    + (S.gran==="day"?"ngày":S.gran==="week"?"tuần":"tháng");
+  $("#trend-sub").textContent = `${label} · ${bs.length} kỳ · di chuột vào cột để xem chi tiết`;
+  renderTrend(bs);
+
+  renderSystem();
+  renderPick();
+  renderDetail();
+
+  const d = detailHub();
+  $("#railfoot").innerHTML = `Dữ liệu ${esc(D0)} → ${esc(iso(NDAYS-1))}<br>`
+    + `${HUBS.length} hub qua Report API`
+    + (d ? `<br>${nf(d.bk.length)} lượt đặt · ${nf(d.cust.length)} khách (${esc(d.hub)})` : "")
+    + (MASK ? `<br><strong>Bản không hiển thị doanh thu.</strong>`
+            : `<br>Doanh thu theo bảng giá đang áp dụng.`);
+}
+
+/* ════════════ KHỞI TẠO ════════════ */
+function init(){
+  P.day = TODAY;
+  if (!HUBS.some(h => h.name === S.hub)) S.hub = HUBS.length ? HUBS[HUBS.length-1].name : "ALL";
+  applyPeriod(S.period);
+  const g = new Date(PAY.generated);
+  const slots = ["06:00","14:00","22:00"], mins = g.getHours()*60+g.getMinutes();
+  const nxt = slots.find(s => { const [h,mi] = s.split(":").map(Number); return h*60+mi > mins; })
+            || slots[0]+" hôm sau";
+  if (MASK){
+    const bm = document.querySelector(".bmark");
+    if (bm) bm.insertAdjacentHTML("beforeend",
+      '<span style="display:inline-block;margin-left:9px;font-size:10px;letter-spacing:.09em;'
+      + 'padding:2px 7px;border:1px solid var(--line);border-radius:2px;color:var(--dim)">KHÔNG DOANH THU</span>');
+  }
+  $("#stamp").innerHTML = `số liệu chốt <b>${String(g.getHours()).padStart(2,"0")}:`
+    + `${String(g.getMinutes()).padStart(2,"0")}</b> ${String(g.getDate()).padStart(2,"0")}/`
+    + `${String(g.getMonth()+1).padStart(2,"0")}<br>cập nhật 06:00 · 14:00 · 22:00 — kế tiếp <b>${nxt}</b>`;
+  $("#trend-toggle").onclick = e => {
+    const on = e.target.getAttribute("aria-pressed")==="true";
+    e.target.setAttribute("aria-pressed", !on);
+    e.target.textContent = on ? "Xem dạng bảng" : "Xem dạng biểu đồ";
+    $("#trend-table").classList.toggle("hide", on);
+    e.target.closest("section").querySelector(".panel").classList.toggle("hide", !on);
+  };
+  render();
+  let t; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(render,180); });
+}
+init();
+}
+</script>

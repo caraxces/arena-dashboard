@@ -1,0 +1,15 @@
+# Dữ liệu thô — KHÔNG bao giờ commit (chứa doanh thu và thông tin khách)
+data.json
+data-team.json
+payload.txt
+*.tmp
+
+# Đầu ra chạy local
+dashboard.html
+snapshot.html
+site/
+
+__pycache__/
+*.pyc
+.env
+.env.*

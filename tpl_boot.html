@@ -1,0 +1,48 @@
+</div>
+<script>
+"use strict";
+(function(){
+  const ITER = __ITER__;
+  const $g = s => document.querySelector(s);
+  const enc = new TextEncoder();
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  async function getJSON(u){
+    const r = await fetch(u, {cache:"no-store"});
+    if (!r.ok) throw new Error("fetch " + r.status);
+    return r.json();
+  }
+  async function tryOpen(code, blob){
+    const base = await crypto.subtle.importKey("raw", enc.encode(code), "PBKDF2", false, ["deriveKey"]);
+    const k = await crypto.subtle.deriveKey(
+      {name:"PBKDF2", salt:b64(blob.salt), iterations: blob.iter || ITER, hash:"SHA-256"},
+      base, {name:"AES-GCM", length:256}, false, ["decrypt"]);
+    const pt = await crypto.subtle.decrypt({name:"AES-GCM", iv:b64(blob.iv)}, k, b64(blob.ct));
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+  function start(payload){
+    window.__ARENA__ = payload;
+    $g("#gate").remove();
+    $g("#app").hidden = false;
+    bootDashboard();
+  }
+  const form = $g("#gform"), inp = $g("#gcode"), err = $g("#gerr"), btn = $g("#gbtn");
+  let blobs = null;
+  form.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const code = inp.value.trim();
+    if (!code) return;
+    err.textContent = ""; btn.disabled = true; btn.textContent = "Đang mở…";
+    try {
+      if (!blobs) blobs = await Promise.all([getJSON("d/a.json"), getJSON("d/b.json")]);
+      for (const blob of blobs){
+        try { start(await tryOpen(code, blob)); return; } catch {}
+      }
+      err.textContent = "Mã không đúng. Kiểm tra lại hoặc hỏi quản lý.";
+    } catch {
+      err.textContent = "Không tải được dữ liệu. Kiểm tra kết nối rồi thử lại.";
+    }
+    btn.disabled = false; btn.textContent = "Mở bảng"; inp.select();
+  });
+  inp.focus();
+})();
+</script>

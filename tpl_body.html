@@ -1,0 +1,101 @@
+<div class="top"><div class="top-in">
+  <div class="bmark"><span>arena by lona&amp;co</span>Bảng theo dõi vận hành</div>
+  <span class="spacer"></span>
+  <div class="stamp" id="stamp"></div>
+</div></div>
+
+<div class="shell">
+<main>
+  <section id="s-pick">
+    <div class="sh"><h2>Chọn hub thay khách</h2>
+      <p>Khách cho khung giờ nhưng “ở đâu cũng được”. Bảng này xếp hạng theo đúng ba tiêu chí:
+         thu về mỗi giờ-sân cao hơn → nhiều sân trống hơn → lấp đầy khung đó thấp hơn.</p></div>
+    <div class="pickbar" id="pickbar"></div>
+    <div id="pick-out"></div>
+    <p class="fine" id="pick-note"></p>
+  </section>
+
+  <section id="s-kpi">
+    <div class="sh"><h2 id="kpi-title">Tổng quan</h2><p id="kpi-sub"></p></div>
+    <div class="kpis" id="kpis"></div>
+  </section>
+
+  <section id="s-trend">
+    <div class="sh"><h2 id="trend-title">Diễn biến</h2>
+      <p id="trend-sub"></p>
+      <button class="tbtn" id="trend-toggle" aria-pressed="false">Xem dạng bảng</button></div>
+    <div class="panel"><div id="trend-chart"></div>
+      <div class="legend" id="trend-legend"></div></div>
+    <div id="trend-table" class="hide scroll"></div>
+  </section>
+
+  <section id="s-system">
+    <div class="sh"><h2>So sánh ba hub</h2><p id="sys-sub"></p></div>
+    <div class="scroll" id="sys-table"></div>
+    <div class="two" style="margin-top:18px">
+      <div><h3>Tỉ lệ lấp đầy</h3><div class="barlist" id="sys-occ"></div></div>
+      <div><h3>Thu về mỗi giờ-sân</h3><div class="barlist" id="sys-aov"></div>
+        <p class="fine">Tiêu chí số 1 khi chọn hub thay khách.</p></div>
+    </div>
+    <h3 style="margin-top:22px">Doanh thu theo tháng</h3>
+    <div class="panel"><div id="sys-chart"></div><div class="legend" id="sys-legend"></div></div>
+  </section>
+
+  <div id="detail-gate" class="hide"></div>
+
+  <div id="detail-wrap">
+    <section id="s-heat">
+      <div class="sh"><h2>Sân × khung giờ</h2><p id="heat-sub"></p></div>
+      <div class="scroll" id="heat"></div>
+      <div class="hlegend" id="heat-legend"></div>
+    </section>
+
+    <section id="s-split">
+      <div class="two">
+        <div><div class="sh"><h2>Theo khung giờ</h2><p id="hour-sub"></p></div>
+          <div class="barlist" id="by-hour"></div></div>
+        <div><div class="sh"><h2>Theo sân</h2><p id="court-sub"></p></div>
+          <div class="barlist" id="by-court"></div></div>
+      </div>
+    </section>
+
+    <section id="s-opp">
+      <div class="sh"><h2>Giờ vàng còn trống</h2><p id="opp-sub"></p></div>
+      <div class="kpis" id="opp-kpis"></div>
+      <div class="two" style="margin-top:16px">
+        <div><h3>Theo ngày</h3><div class="barlist" id="opp-days"></div></div>
+        <div><h3>Khối lớn nhất — gọi khách trước</h3><div class="scroll" id="opp-list"></div></div>
+      </div>
+    </section>
+
+    <section id="s-cust">
+      <div class="sh"><h2>Khách hàng</h2><p id="cust-sub"></p></div>
+      <div class="kpis" id="cust-kpis"></div>
+      <div class="two" style="margin-top:18px">
+        <div><h3>Đặt trước bao lâu</h3><div class="barlist" id="lead-bars"></div>
+          <p class="fine">Thời gian từ lúc tạo đơn tới giờ chơi.</p></div>
+        <div><h3>Tần suất đặt / khách</h3><div class="barlist" id="freq-bars"></div></div>
+      </div>
+      <h3 style="margin-top:22px">Top khách theo giá trị</h3>
+      <div class="scroll" id="top-cust"></div>
+      <p class="fine" id="cust-note"></p>
+    </section>
+  </div>
+</main>
+
+<aside class="rail"><div class="railgrid">
+  <div class="ctl"><h4>Hub</h4><div class="seg stack" id="c-hub"></div></div>
+  <div class="ctl"><h4>Kỳ xem</h4>
+    <div class="seg" id="c-period"></div>
+    <div class="dates"><input type="date" id="c-from" aria-label="Từ ngày">
+      <input type="date" id="c-to" aria-label="Đến ngày"></div></div>
+  <div class="ctl"><h4>Gộp theo</h4><div class="seg" id="c-gran"></div></div>
+  <div class="ctl"><h4>Chỉ số chính</h4><div class="seg stack" id="c-metric"></div></div>
+  <div class="ctl"><h4>Loại khách</h4><div class="seg" id="c-ctype"></div></div>
+  <div class="ctl" id="ctl-courts"><h4>Sân
+      <button class="mini-a" id="c-allcourts" style="float:right">tất cả</button></h4>
+    <div class="chips" id="c-courts"></div></div>
+  <div class="railfoot" id="railfoot"></div>
+</div></aside>
+</div>
+<div id="tip" role="status" aria-live="polite"></div>
