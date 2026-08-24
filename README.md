@@ -3,7 +3,7 @@
 Bảng theo dõi vận hành cho hệ thống sân cầu lông **arena by lona&co** (3 hub, 23 sân, Đà Nẵng).
 Đọc dữ liệu trực tiếp từ **Mewin Partner API** (nền tảng của G-Sport).
 
-Trang online: xem mục *Truy cập* bên dưới.
+Trang online: <https://caraxces.github.io/arena-dashboard/> — cần mã truy cập, xem bảng bên dưới.
 
 ## Bảo mật — đọc trước khi sửa gì
 

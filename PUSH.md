@@ -11,7 +11,7 @@ Vào https://github.com/new → tên `arena-dashboard` → **không** tích "Add
 
 ```bash
 cd đường/dẫn/tới/arena
-git remote add origin https://github.com/huynguyen-hdrc/arena-dashboard.git
+git remote add origin https://github.com/caraxces/arena-dashboard.git
 git branch -M main
 git push -u origin main
 ```
@@ -24,7 +24,7 @@ Repo → **Settings** → **Pages** → Source: `Deploy from a branch`
 Sau 1–2 phút link sẽ là:
 
 ```
-https://huynguyen-hdrc.github.io/arena-dashboard/
+https://caraxces.github.io/arena-dashboard/
 ```
 
 Đó là link gửi cho team.
