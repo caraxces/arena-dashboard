@@ -10,7 +10,7 @@ Trang online: <https://caraxces.github.io/arena-dashboard/> — cần mã truy c
 Repo này công khai để dùng GitHub Pages miễn phí, nên **không có dữ liệu nào ở dạng đọc được**:
 
 - `docs/d/a.json` và `docs/d/b.json` là **ciphertext AES-256-GCM**. Khoá dẫn xuất từ mã truy cập
-  bằng PBKDF2-HMAC-SHA256, 210.000 vòng, salt ngẫu nhiên mỗi lần build.
+  bằng PBKDF2-HMAC-SHA256, 600.000 vòng (khuyến nghị OWASP hiện hành), salt ngẫu nhiên mỗi lần build.
 - Repo **không chứa mã truy cập, không chứa hash của mã**. Nhập sai thì giải mã thất bại — không có đường vòng.
 - `data.json` (dữ liệu thô: doanh thu, tên khách, số điện thoại) nằm trong `.gitignore`.
   **Không bao giờ commit file này.**
@@ -42,10 +42,10 @@ git add docs && git commit -m "cập nhật số liệu" && git push
 Đổi mã truy cập = chạy lại `build_site.py` với mã mới rồi push. Mã cũ hết tác dụng ngay
 vì ciphertext được sinh lại.
 
-Nên chạy 3 lần/ngày. Trên macOS thêm vào `crontab -e`:
+Nên chạy 4 lần/ngày (06:00 · 10:00 · 16:00 · 22:00). Trên macOS thêm vào `crontab -e`:
 
 ```
-0 6,14,22 * * * cd /ĐƯỜNG/DẪN/arena-dashboard && ARENA03_TOKEN='...' ./refresh.sh >> refresh.log 2>&1
+0 6,10,16,22 * * * cd /ĐƯỜNG/DẪN/arena-dashboard && ARENA03_TOKEN='...' ./refresh.sh >> refresh.log 2>&1
 ```
 
 ## Cấu trúc
@@ -61,6 +61,16 @@ Nên chạy 3 lần/ngày. Trên macOS thêm vào `crontab -e`:
 | `app.py` | Server local có tự làm mới — `python3 app.py` rồi mở localhost:8787 |
 | `sync.py` | Bản gọn chỉ để kéo dữ liệu |
 | `tpl_*.html` | Template giao diện: head/CSS, gate, body, boot, JS |
+| `docs/fonts/` | Font Averta (thương mại — tự đặt file vào, xem README trong đó) |
+
+## Font
+
+Giao diện dùng **Averta**. Đây là font thương mại, không có trên Google Fonts, nên file
+`.woff2` không nằm trong repo — đặt vào `docs/fonts/` theo hướng dẫn ở đó. Chưa có file
+thì tự động dùng **Plus Jakarta Sans** (Google Fonts, đủ dấu tiếng Việt).
+
+`build_site.py` chỉ sinh `@font-face` cho file thật sự tồn tại nên không có font cũng
+không sinh lỗi 404, và thư mục `docs/fonts/` được giữ nguyên mỗi lần dựng lại.
 
 ## Nguồn dữ liệu
 

@@ -26,8 +26,25 @@ if len(c_team) < 6:
 
 read = lambda f: open(os.path.join(here, f), encoding="utf-8").read()
 site = os.path.join(here, "docs")   # GitHub Pages phục vụ từ /docs
+fonts = os.path.join(site, "fonts")
+
+# GIỮ LẠI docs/fonts/ — file font có license nằm ở đó, dựng lại không được xoá
+keep = None
+if os.path.isdir(fonts):
+    keep = os.path.join(here, ".fonts.bak")
+    shutil.rmtree(keep, ignore_errors=True)
+    shutil.copytree(fonts, keep)
+
 shutil.rmtree(site, ignore_errors=True)
 os.makedirs(os.path.join(site, "d"))
+
+if keep:
+    shutil.copytree(keep, fonts)
+    shutil.rmtree(keep, ignore_errors=True)
+    n = sum(len(f) for _, _, f in os.walk(fonts))
+    print(f"  giữ lại docs/fonts/ ({n} file)")
+else:
+    os.makedirs(fonts, exist_ok=True)
 
 # 1) dữ liệu
 if not os.path.exists(os.path.join(here, "data-team.json")):
@@ -42,12 +59,33 @@ for code, src, out in ((c_team, "data-team.json", "a.json"),
 
 # 2) trang
 boot = read("tpl_boot.html").replace("__ITER__", str(ITER))
+
+# @font-face chỉ sinh cho file font THẬT SỰ có trong docs/fonts/ — tránh 404 vô ích
+AVERTA = [("Averta-Regular.woff2",       "normal", 400),
+          ("Averta-Semibold.woff2",      "normal", 500),
+          ("Averta-Semibold.woff2",      "normal", 600),
+          ("Averta-Bold.woff2",          "normal", 700),
+          ("Averta-Extrabold.woff2",     "normal", 800),
+          ("Averta-RegularItalic.woff2", "italic", 400)]
+faces, seen = [], set()
+for fn, style, wt in AVERTA:
+    if not os.path.exists(os.path.join(fonts, fn)):
+        continue
+    faces.append('@font-face{font-family:"Averta";font-style:%s;font-weight:%d;'
+                 'font-display:swap;src:url("fonts/%s") format("woff2")}' % (style, wt, fn))
+    seen.add(fn)
+face_css = ("/* Averta — sinh tự động từ file có trong docs/fonts/ */\n" + "\n".join(faces)
+            if faces else
+            "/* Chưa có file Averta trong docs/fonts/ — đang dùng Plus Jakarta Sans thay thế. */")
+print("  font Averta tìm thấy: %d file (%s)"
+      % (len(seen), ", ".join(sorted(seen)) if seen else "chưa có — dùng font dự phòng"))
 html = ('<!doctype html><html lang="vi"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<meta name="robots" content="noindex,nofollow">'
         '<title>Arena — Bảng theo dõi vận hành</title>'
         '</head><body>'
         + read("tpl_head.html").replace("<title>Arena Daily</title>", "")
+                        .replace("__AVERTA_FACES__", face_css)
         + read("tpl_gate.html")
         + read("tpl_body.html")
         + boot

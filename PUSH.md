@@ -54,10 +54,10 @@ python3 build_site.py 'MÃ_QUẢN_LÝ' 'MÃ_TEAM'
 git add docs && git commit -m "số liệu $(date +%F)" && git push
 ```
 
-Muốn tự động 3 lần/ngày thì cho khối lệnh trên vào một file `.sh` rồi thêm vào `crontab -e`:
+Muốn tự động 4 lần/ngày (06:00 · 10:00 · 16:00 · 22:00) thì cho khối lệnh trên vào một file `.sh` rồi thêm vào `crontab -e`:
 
 ```
-0 6,14,22 * * * cd /ĐƯỜNG/DẪN/arena && ./deploy.sh >> deploy.log 2>&1
+0 6,10,16,22 * * * cd /ĐƯỜNG/DẪN/arena && ./deploy.sh >> deploy.log 2>&1
 ```
 
 ## Điều KHÔNG được làm
@@ -65,4 +65,7 @@ Muốn tự động 3 lần/ngày thì cho khối lệnh trên vào một file `
 - Đừng bỏ `data.json` hay `data-team.json` khỏi `.gitignore`. Hai file đó chứa doanh thu,
   tên khách và số điện thoại ở dạng đọc được.
 - Đừng viết token API vào bất kỳ file nào trong repo. Luôn truyền qua biến môi trường.
-- Đừng đặt mã quản lý ngắn dưới 10 ký tự — nó chính là khoá giải mã.
+- **Mã quản lý chính là khoá giải mã AES.** Repo công khai nghĩa là ciphertext ai cũng
+  tải được, và bẻ khoá chạy offline — không có giới hạn số lần thử nào chặn được. Mã toàn
+  chữ số hoặc dễ đoán bị bẻ trong vài giây bằng từ điển mật khẩu. Mã đang dùng có 79 bit
+  entropy; đừng thay bằng mã ngắn hơn.

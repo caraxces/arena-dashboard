@@ -3,7 +3,7 @@
 import base64, hashlib, json, os, sys
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-ITER = 210000
+ITER = 600000
 
 def derive(code, salt):
     return hashlib.pbkdf2_hmac("sha256", code.encode(), salt, ITER, 32)

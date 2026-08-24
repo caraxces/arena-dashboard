@@ -1,8 +1,9 @@
 <!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Arena — Bảng theo dõi vận hành</title></head><body>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
+/* Chưa có file Averta trong docs/fonts/ — đang dùng Plus Jakarta Sans thay thế. */
 :root{
  color-scheme:light;
  --ink:#0C1512;--ink2:#46544D;--dim:#6E7D75;--bg:#EDF0EC;--card:#F6F8F5;--card2:#E4E9E4;
@@ -11,7 +12,9 @@
  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;        /* categorical: 3 slot đã kiểm định */
  --q0:#E4E9E4;--q1:#D3E4DA;--q2:#A9CFBD;--q3:#6FB496;--q4:#3C9070;--q5:#1B6B4F;
  --qi0:#6E7D75;--qi1:#46544D;--qi2:#0C1512;--qi3:#0C1512;--qi4:#F6F8F5;--qi5:#F6F8F5;
- --fd:"Be Vietnam Pro",-apple-system,"Segoe UI",system-ui,sans-serif;
+ --fd:"Averta","Plus Jakarta Sans",-apple-system,"Segoe UI",system-ui,sans-serif;
+ /* Đổi --fm thành var(--fd) nếu muốn CẢ SỐ cũng dùng Averta.
+    Đang để mono vì nó giữ các cột số trong bảng và heatmap thẳng hàng. */
  --fm:"IBM Plex Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
  --rail:246px;
 }
@@ -343,7 +346,7 @@ h3{font-size:13.5px;font-weight:600;margin:0 0 8px}
 <script>
 "use strict";
 (function(){
-  const ITER = 210000;
+  const ITER = 600000;
   const $g = s => document.querySelector(s);
   const enc = new TextEncoder();
   const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
@@ -395,6 +398,8 @@ const MASK = !!PAY.masked;
 const HOURS = []; for (let h = 5; h < 24; h++) HOURS.push(h);
 const DOW = ["T2","T3","T4","T5","T6","T7","CN"];
 const PEAK_S = 1020, PEAK_E = 1260, MS = 864e5;
+/* Mốc chốt số liệu trong ngày — đổi ở đây là đổi cả lịch cron lẫn dòng hiển thị. */
+const SLOTS = ["06:00","10:00","16:00","22:00"];
 const D0 = SYS.dailyD0, NDAYS = SYS.dailyN, TODAY = SYS.today, OPENH = SYS.openHours || 19;
 const DETAIL = {}; (PAY.hubs || []).forEach(h => DETAIL[h.hub] = h);
 const HUBS = SYS.hubs || [];
@@ -1217,18 +1222,31 @@ function init(){
   if (!HUBS.some(h => h.name === S.hub)) S.hub = HUBS.length ? HUBS[HUBS.length-1].name : "ALL";
   applyPeriod(S.period);
   const g = new Date(PAY.generated);
-  const slots = ["06:00","14:00","22:00"], mins = g.getHours()*60+g.getMinutes();
-  const nxt = slots.find(s => { const [h,mi] = s.split(":").map(Number); return h*60+mi > mins; })
-            || slots[0]+" hôm sau";
+  const p2 = n => String(n).padStart(2,"0");
+  function stampHTML(){
+    const now = new Date();                    // kỳ kế tiếp tính từ BÂY GIỜ, không phải giờ build
+    const mins = now.getHours()*60 + now.getMinutes();
+    const nxt = SLOTS.find(x => { const [h,mi] = x.split(":").map(Number); return h*60+mi > mins; })
+              || SLOTS[0] + " hôm sau";
+    const ageH = (now - g) / 36e5;
+    const age = ageH < 1  ? `${Math.max(1, Math.round(ageH*60))} phút trước`
+              : ageH < 48 ? `${Math.round(ageH)} giờ trước`
+                          : `${Math.round(ageH/24)} ngày trước`;
+    const gap = 24 / SLOTS.length;              // khoảng cách giữa hai kỳ
+    const stale = ageH > gap * 1.75;            // trễ hơn một kỳ rưỡi → nhiều khả năng cron hỏng
+    return `số liệu chốt <b>${p2(g.getHours())}:${p2(g.getMinutes())}</b> `
+         + `${p2(g.getDate())}/${p2(g.getMonth()+1)} · `
+         + `<b${stale ? ' style="color:var(--bad)"' : ''}>${age}</b>`
+         + `<br>cập nhật ${SLOTS.join(" · ")} — kế tiếp <b>${nxt}</b>`;
+  }
   if (MASK){
     const bm = document.querySelector(".bmark");
     if (bm) bm.insertAdjacentHTML("beforeend",
       '<span style="display:inline-block;margin-left:9px;font-size:10px;letter-spacing:.09em;'
       + 'padding:2px 7px;border:1px solid var(--line);border-radius:2px;color:var(--dim)">KHÔNG DOANH THU</span>');
   }
-  $("#stamp").innerHTML = `số liệu chốt <b>${String(g.getHours()).padStart(2,"0")}:`
-    + `${String(g.getMinutes()).padStart(2,"0")}</b> ${String(g.getDate()).padStart(2,"0")}/`
-    + `${String(g.getMonth()+1).padStart(2,"0")}<br>cập nhật 06:00 · 14:00 · 22:00 — kế tiếp <b>${nxt}</b>`;
+  $("#stamp").innerHTML = stampHTML();
+  setInterval(() => { $("#stamp").innerHTML = stampHTML(); }, 60000);
   $("#trend-toggle").onclick = e => {
     const on = e.target.getAttribute("aria-pressed")==="true";
     e.target.setAttribute("aria-pressed", !on);
