@@ -42,11 +42,16 @@ git add docs && git commit -m "cập nhật số liệu" && git push
 Đổi mã truy cập = chạy lại `build_site.py` với mã mới rồi push. Mã cũ hết tác dụng ngay
 vì ciphertext được sinh lại.
 
-Nên chạy 4 lần/ngày (06:00 · 10:00 · 16:00 · 22:00). Trên macOS thêm vào `crontab -e`:
+Chạy 4 lần/ngày (06:00 · 10:00 · 16:00 · 22:00) qua **LaunchAgent**, không dùng cron:
+cron trên macOS không truy cập được keychain nên `git push` thất bại.
 
-```
-0 6,10,16,22 * * * cd /ĐƯỜNG/DẪN/arena-dashboard && ARENA03_TOKEN='...' ./refresh.sh >> refresh.log 2>&1
-```
+Lịch nằm ở `~/Library/LaunchAgents/com.arena.dashboard.plist`, gọi `./deploy.sh`,
+log ghi vào `deploy.log`. Bí mật (3 token + 2 mã truy cập) đọc từ `~/.config/arena/env`
+(chmod 600, ngoài repo) — không bao giờ ghi token vào file trong repo.
+
+`deploy.sh` thử lại tối đa 3 lần và chỉ publish khi `validate.py` xác nhận dữ liệu đủ
+(3 hub, mỗi hub ≥150 ngày chuỗi số). Thiếu thì bỏ qua kỳ đó, giữ nguyên dữ liệu cũ —
+API hay timeout giữa chừng và trả về chuỗi ngày cụt.
 
 ## Cấu trúc
 
@@ -56,10 +61,9 @@ Nên chạy 4 lần/ngày (06:00 · 10:00 · 16:00 · 22:00). Trên macOS thêm 
 | `mask_data.py` | Lược sạch mọi trường tiền → `data-team.json` |
 | `crypt.py` | Mã hoá AES-256-GCM, khoá PBKDF2 |
 | `build_site.py` | Dựng `docs/` cho GitHub Pages |
-| `build_dash.py` | Ghép template + dữ liệu (bản chạy local, nhúng sẵn dữ liệu) |
+| `validate.py` | Cổng kiểm tra — chặn publish nếu dữ liệu API thiếu |
+| `deploy.sh` | Chạy cả chuỗi rồi commit + push (LaunchAgent gọi file này) |
 | `engine.py` | Client API + phép tính metrics |
-| `app.py` | Server local có tự làm mới — `python3 app.py` rồi mở localhost:8787 |
-| `sync.py` | Bản gọn chỉ để kéo dữ liệu |
 | `tpl_*.html` | Template giao diện: head/CSS, gate, body, boot, JS |
 | `docs/fonts/` | Font Averta (thương mại — tự đặt file vào, xem README trong đó) |
 

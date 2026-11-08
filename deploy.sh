@@ -36,13 +36,15 @@ set -e
 python3 mask_data.py data.json data-team.json
 python3 build_site.py "$CODE_FULL" "$CODE_TEAM" >/dev/null
 
+# Chỉ commit docs/. Dùng --only để commit tự động không cuốn theo
+# những gì người dùng đang stage dở trong repo.
 git add docs
-if git diff --cached --quiet; then
+if git diff --cached --quiet -- docs; then
   echo "$(ts) không có thay đổi — bỏ qua"
   exit 0
 fi
 
-git commit -q -m "auto: số liệu $(date '+%F %H:%M')"
+git commit -q --only docs -m "auto: số liệu $(date '+%F %H:%M')"
 git push origin main
 
 echo "=== $(ts) xong: $(git rev-parse --short HEAD) ==="
